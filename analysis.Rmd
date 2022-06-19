@@ -1,0 +1,225 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+require(tidyverse)
+require(reticulate)
+require(spacyr)
+require(topicmodels)
+require(arrow)
+require(knitr)
+require(kableExtra)
+require(lubridate)
+require(gridExtra)
+
+PYTHON_PATH <- "/home/jcierocki/.pyenv/shims/python3"
+
+use_python(PYTHON_PATH)
+torch <- import("torch")
+transformers <- import("transformers")
+
+spacy_initialize("en_core_web_md", PYTHON_PATH)
+
+source("common.R")
+
+```
+
+
+```{r data}
+# df <- read_csv("data/vaccination_all_tweets.csv")
+# arrow::write_parquet(df, "data/vaccination_all_tweets.parquet", version = "2.0", compression = "lz4", compression_level = 20)
+
+df <- arrow::read_parquet("data/vaccination_all_tweets.parquet")
+head(df) |> kable(format = "pipe")
+
+```
+
+## Labeling sentiment using BERT
+
+```{r transformers_config, message=FALSE, results='hide'}
+device <- ifelse(
+  torch$cuda$is_available(),
+  "cuda:0",
+  "cpu"
+)
+
+tokenizer <- transformers$AutoTokenizer$from_pretrained(
+  "pysentimiento/robertuito-sentiment-analysis",
+  normalization = TRUE
+)
+
+model <- transformers$AutoModelForSequenceClassification$from_pretrained("pysentimiento/robertuito-sentiment-analysis")$to(device)
+
+pipeline <- transformers$TextClassificationPipeline(
+  model = model, 
+  tokenizer = tokenizer, 
+  device = ifelse(device == "cpu", -1L, 0L), 
+  top_k = 1L
+)
+
+```
+
+```{r transformers_predict}
+df_sentiment <- pipeline(df$text) |> 
+  map_dfr(~ .x[[1]]) |>
+  mutate(
+    sentiment = as.factor(label) |> `levels<-`(list(
+        "Positive" = "POS",
+        "Negative" = "NEG",
+        "Neutral" = "NEU"
+      )),
+    .before = 1
+  ) |>
+  select(-label)
+
+head(df_sentiment)
+```
+```{r sentiment_bind}
+df <- bind_cols(df, df_sentiment)
+
+# df |>
+#   arrow::write_parquet(
+#     "data/vaccination_all_tweets.parquet", 
+#     version = "2.0", 
+#     compression = "lz4", 
+#     compression_level = 20
+#   )
+```
+
+## Data wrangling
+
+```{r data_wrangling}
+df <- arrow::read_parquet("data/vaccination_all_tweets.parquet")
+
+print(any(df$is_retweet)) # feature to be removed
+
+minor_tweets_sources <- df$source |> 
+  unique() |>
+  na.omit() |>
+  discard(~ .x %in% c(
+    "Twitter for iPhone", 
+    "Twitter for Android", 
+    "Twitter Web App",
+    "Twitter for iPad",
+    "TweetDeck",
+    "Instagram"
+  )) |>
+  c("NA")
+
+df <- df |> 
+  select(-is_retweet) |>
+  mutate(
+    source = ifelse(is.na(source), "NA", source) |>
+      as.factor() |>
+      forcats::fct_collapse(
+        "Twitter for iPhone/iPad" = c("Twitter for iPhone", "Twitter for iPad"),
+        "Other" = minor_tweets_sources
+      ) |>
+      relevel(ref = "Other"),
+    account_age_days = as_date(user_created) |> as.integer(),
+    days_since_2019 = as.integer(as_date(date) - ymd("2019-12-31")),
+    hashtags = hashtags |>
+      str_extract("(?<=^\\[).*(?=\\]$)") |>
+      str_remove_all("ー") |>
+      str_extract_all("(?<=').*?(?=[',\\s])") |>
+      map(
+        ~ str_to_lower(.x[.x != ""]) |> 
+          str_remove_all("[:punct:]") |>
+          unique()
+      )
+  ) |>
+  mutate(
+    account_age_days = account_age_days - min(account_age_days)
+  )
+
+df |> select(id, source, account_age_days, days_since_2019, hashtags) |> head()
+
+```
+
+```{r hashtags_processing}
+df_inference <- df |> 
+  select(id, user_followers, user_friends, user_favourites, user_verified, hashtags, source, retweets, favorites, account_age_days, days_since_2019, sentiment, score) |>
+  filter(sentiment %in% c("Positive", "Negative"))
+
+top_popular_hashtags <- df_inference$hashtags |> 
+  as.list() %>% 
+  do.call(c, .) |> 
+  table() |> 
+  sort(decreasing = TRUE) |>
+  head(25)
+
+print(top_popular_hashtags)
+
+df_hashtags_dummy <- top_popular_hashtags |>
+  names() |>
+  map_dfc(~ {
+    hashtag <- .
+    tibble(
+      !!sprintf("hashtag_%s", hashtag) := df_inference$hashtags |> map_lgl(~ hashtag %in% .x)
+    )
+  })
+
+df_inference <- bind_cols(df_inference, df_hashtags_dummy)
+
+head(df_hashtags_dummy)
+```
+
+## EDA
+
+```{r sentiment_counts}
+df |> 
+  count(sentiment) |> 
+  ggplot(aes(x = sentiment, y = n, fill = sentiment)) + 
+  geom_col() + 
+  geom_text(aes(label = as.character(n)), vjust = 1.5) + 
+  labs(x = NULL, y = NULL, title = "Number of tweets by BERT-predicted sentiment class") + 
+  theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r histograms}
+df_inference |> select(-score, -id) |> map_lgl(is.numeric) |> sum() |> print()
+
+df_inference |> 
+  select(where(is.numeric), -score, -id) |>
+  histogram_grid()
+
+```
+Conclusion: log-transformation required for many variables as they show heavy-tail property.
+
+```{r log_transformations}
+heavy_tailed_features <- c("user_followers", "user_friends", "user_favourites", "retweets", "favorites")
+
+df_inference2 <- df_inference |>
+  mutate(across(all_of(heavy_tailed_features), ~ log(.x + 1))) |>
+  rename_with(~ sprintf("log_%s", .x), all_of(heavy_tailed_features))
+
+df_inference2 |>
+  select(all_of(sprintf("log_%s", heavy_tailed_features))) |>
+  histogram_grid()
+
+```
+```{r logit_model}
+options(scipen = 5)
+
+logit_m1 <- df_inference2 |> 
+  select(-id, -hashtags, -score) |>
+  mutate(sentiment = sentiment |> relevel(ref = "Negative")) |>
+  mutate(across(where(is.logical), as.integer)) %>%
+  glm(sentiment ~ . + I(account_age_days^2) + I(days_since_2019^2), family = binomial(link = "logit"), data = .)
+
+summary(logit_m1)
+```
+
+```{r logit_model_eval}
+
+acc_insample <- sum(round(logit_m1$fitted.values + 1) == as.integer(logit_m1$data$sentiment)) / nrow(logit_m1$data)
+
+sprintf("Accuracy in-sample: %f\n\n", acc_insample) |> cat()
+DescTools::PseudoR2(logit_m1, which = "all")
+
+```
+
+
