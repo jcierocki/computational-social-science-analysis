@@ -65,7 +65,7 @@ head(df) |> kable(format = "pipe")
 
 ## Labeling sentiment using BERT
 
-Sentiment analysis is very common task among Natural Language Processing topics. Although it is itself a supervised learning problem requiring availability of target variable expressing sentiment which is not the case of our dataset. So as we decided to utilize pre-trained *BERTweet* Neural Network (Transformer) model, fine-tuned for sentiment analysis to obtain predicted sentiments based on pure text, then explain them using other features in a statistical, supervised fashion. The model, named `pysentimiento/robertuito-sentiment-analysis` was retrieved from *Hugging Face* repository, containing many pre-trained transformers, see (Pérez et el., 2021). As *Hugging Face* does not deliver *R* API at all, and the *torch* (neural network library required to obtain predictions) one is still immature we decided to call of them in *R* using `reticulate` package.
+Sentiment analysis is very common task among Natural Language Processing topics. Although it is itself a supervised learning problem requiring availability of target variable expressing sentiment which is not the case of our dataset. So as we decided to utilize pre-trained *BERTweet* Neural Network (Transformer) model, fine-tuned for sentiment analysis to obtain predicted sentiments based on pure text, then explain them using other features in a statistical, supervised fashion. The model, named `finiteautomata/bertweet-base-sentiment-analysis` was retrieved from *Hugging Face* repository, containing many pre-trained transformers, see (Pérez et el., 2021). As *Hugging Face* does not deliver *R* API at all, and the *torch* (neural network library required to obtain predictions) one is still immature we decided to call of them in *R* using `reticulate` package.
 
 ```{r transformers_config, message=FALSE, results='hide'}
 device <- ifelse(
@@ -75,11 +75,11 @@ device <- ifelse(
 )
 
 tokenizer <- transformers$AutoTokenizer$from_pretrained(
-  "pysentimiento/robertuito-sentiment-analysis",
+  "finiteautomata/bertweet-base-sentiment-analysis",
   normalization = TRUE
 )
 
-model <- transformers$AutoModelForSequenceClassification$from_pretrained("pysentimiento/robertuito-sentiment-analysis")$to(device)
+model <- transformers$AutoModelForSequenceClassification$from_pretrained("finiteautomata/bertweet-base-sentiment-analysis")$to(device)
 
 pipeline <- transformers$TextClassificationPipeline(
   model = model, 
@@ -398,10 +398,18 @@ This proven that theoretically very noisy data scraped/collected from social net
 
 We experienced some limitations while conducting this analysis. First, in the dataset, some of the tweets texts were cut, causing information loss. Moreover lack of computational power was sometime a limitation, due to the size of dataset and nature of unstructured data which is in general very demanding in those terms. *R* itself was limiting us a lot, as its' NLP package ecosystem is significantly less matured comparing to *Python* one as well us amount of learning materials is more limited. Moreover, in *R* package ecosystem is more distributed and still many packages like i.e. `quanteda` do not follow *tidydata* coding and design principals. Finally Fisher-originated approach to statistical inference, relaying heavily on $p$-values, is not well suited for huge, computationally generated datasets. In further research, bayesian approach seems worth trying.
 
+# Elevator pitch
+
+Our study focuses on the analysis of tweets related to COVID-19 vaccines that we obtained from [kaggle.com](https://www.kaggle.com/datasets/gpreda/all-covid19-vaccines-tweets). We were looking for the answers to two questions:
+To what extent and how account and tweet characteristics explain people positive/negative attitude related to COVID-19 vaccines? and
+What are the main subtopics disputed by people who engage in social media discussion about COVID-19-related matters?
+
+In our research we used *GNU R* and various ML and statistical libraries inc. `transformers`, `pytorch`, `spacyr`, `quanteda` and `tidytext`.
+
+We found out that indeed account and tweet characteristics explain the tweet predicted sentiment well as well as there are some clearly separable topics among the tweets with nice, hypothetical interpretations. 
+
 # References
 
-1. Juan M. Pérez, Damián A. Furman, Laura A. Alemany, Franco Luque. 2021. pysentimiento: A Python Toolkit for Sentiment Analysis and SocialNLP tasks. arXiv. 2106.09462.
+1. Juan M. Pérez, Juan C. Giudici, Franco Luque. 2021. pysentimiento: A Python Toolkit for Sentiment Analysis and SocialNLP tasks. arXiv. 2106.09462.
 
 2. David M. Blei, Andrew Y. Ng, and Michael I. Jordan. 2003. Latent dirichlet allocation. J. Mach. Learn. Res. 3, null (3/1/2003), 993–1022.
-
-topic interpretations reordered and adjusted, crticial analysis and papers added
