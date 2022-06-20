@@ -13,6 +13,10 @@ require(knitr)
 require(kableExtra)
 require(lubridate)
 require(gridExtra)
+require(tidytext)
+require(quanteda)
+require(quanteda.textplots)
+require(quanteda.textstats)
 
 PYTHON_PATH <- "/home/jcierocki/.pyenv/shims/python3"
 
@@ -20,23 +24,42 @@ use_python(PYTHON_PATH)
 torch <- import("torch")
 transformers <- import("transformers")
 
+tryCatch(
+  {spacy_finalize()},
+  error = function(e) cat("SpaCy not initialised yet.")
+)
 spacy_initialize("en_core_web_md", PYTHON_PATH)
 
 source("common.R")
 
 ```
+# Introduction
 
+The rise of COVID-19 pandemic and further vaccines development raised concerns of people all around the world. The discussion was conducted through, among the other, social media, including the biggest platforms like Facebook or Twitter. Probably never before a single topic was so popular all around the globe at the same time. Unfortunately, this topic also significantly polarized global society as well as entailed the rise of misinformation, commonly simplified as "fake news".
+
+In this analysis we would like to focus on two aspects of that topic:
+1. To what extent and how account characteristics explain people positive/negative attitude related to COVID-19 vaccines (sentiment analysis)?
+2. What are the main subtopics disputed by people who engage in social media discussion about COVID-19-related matters?
+
+In order to answer those questions we utilized dataset retrieved from [kaggle.com](https://www.kaggle.com/datasets/gpreda/all-covid19-vaccines-tweets), containing 228 207 tweets related to COVID-19 collected from Twitter API using Python, between January 2020 and November 2021. Every observation contains tweet text as well as 15 other features being characteristics of both account and post itself. 
+
+The data was not anonymized, but as all those tweets are available publicly online it was not mandatory. Anyway in our research we will use neither account names nor descriptions as they contain many character of non-standard encoding or missing values so as provide not a lot of research value. 
+
+Because of the huge size of the dataset and GitHub file size limit we utilized Apache Arrow Parquet compressed binary data format which reduced our file size more than by factor of 3. So only that file will be available in the repository and utilized in further part of that research.
 
 ```{r data}
-# df <- read_csv("data/vaccination_all_tweets.csv")
+# df <- read_csv("data/vaccination_all_tweets.csv", col_types = cols(id = col_character()))
 # arrow::write_parquet(df, "data/vaccination_all_tweets.parquet", version = "2.0", compression = "lz4", compression_level = 20)
 
 df <- arrow::read_parquet("data/vaccination_all_tweets.parquet")
 head(df) |> kable(format = "pipe")
 
 ```
+# Question 1: Sentiment analysis
 
 ## Labeling sentiment using BERT
+
+Sentiment analysis is very common task among Natural Language Processing topics. Although it is itself a supervised learning problem requiring availability of target variable expressing sentiment which is not the case of our dataset. So as we decided to utilize pre-trained *BERTweet* Neural Network (Transformer) model, fine-tuned for sentiment analysis to obtain predicted sentiments based on pure text, then explain them using other features in a statistical, supervised fashion. The model, named `pysentimiento/robertuito-sentiment-analysis` was retrieved from *Hugging Face* repository, containing many pre-trained transformers. As *Hugging Face* does not deliver *R* API at all, and the *torch* (neural network library required to obtain predictions) one is still immature we decided to call of them in *R* using `reticulate` package.
 
 ```{r transformers_config, message=FALSE, results='hide'}
 device <- ifelse(
@@ -76,19 +99,34 @@ df_sentiment <- pipeline(df$text) |>
 
 head(df_sentiment)
 ```
+
+The standard approach for neural-based sentiment classifiers is to consider 3 different class: Positive, Negative and Neutral. In classical Logistic Regression we require two classes, so as we decided to drop the most numerous, Neutral class which itself reduced noise by a lot, still preserving more than sufficient amount of observations (around 49k). They are models enabling statistical inference on multinomial target, like Probit model or modified Logit one but we decided not to utilize them as they make interpretation of the parameters less straightforward also being significantly more computationaly expensive which is an issue regarding a size of available data. 
+
 ```{r sentiment_bind}
 df <- bind_cols(df, df_sentiment)
 
-# df |>
-#   arrow::write_parquet(
-#     "data/vaccination_all_tweets.parquet", 
-#     version = "2.0", 
-#     compression = "lz4", 
-#     compression_level = 20
-#   )
+df |>
+  arrow::write_parquet(
+    "data/vaccination_all_tweets.parquet",
+    version = "2.0",
+    compression = "lz4",
+    compression_level = 20
+  )
+```
+
+```{r sentiment_counts}
+df |> 
+  count(sentiment) |> 
+  ggplot(aes(x = sentiment, y = n, fill = sentiment)) + 
+  geom_col() + 
+  geom_text(aes(label = as.character(n)), vjust = 1.5) + 
+  labs(x = NULL, y = NULL, title = "Number of tweets by BERT-predicted sentiment class") + 
+  theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
 ```
 
 ## Data wrangling
+
+In order to reduce amount of dummies and simplify model interpretation we combined iPhone's and iPad's into single level, as well as putting all minor sources into one, reference class "Other". Hashtags get cleaned and normalized. Variable "is_retweet" is probably corrupted, because contains onfly single value "FALSE" and so as was dropped. Finally datetime features get converted to *integer* expressing number of days since fixed point of time, respectively minimum value for account creation and beginning of the pandemic for tweet publish date.
 
 ```{r data_wrangling}
 df <- arrow::read_parquet("data/vaccination_all_tweets.parquet")
@@ -138,17 +176,22 @@ df |> select(id, source, account_age_days, days_since_2019, hashtags) |> head()
 
 ```
 
+As total number of unique hashtags is very high (101976), possibly causing computational problems due to curse of dimensionality we decided to focus on only TOP25 most common hashtags.
+
 ```{r hashtags_processing}
 df_inference <- df |> 
   select(id, user_followers, user_friends, user_favourites, user_verified, hashtags, source, retweets, favorites, account_age_days, days_since_2019, sentiment, score) |>
   filter(sentiment %in% c("Positive", "Negative"))
 
-top_popular_hashtags <- df_inference$hashtags |> 
+all_hashtags <- df_inference$hashtags |> 
   as.list() %>% 
   do.call(c, .) |> 
   table() |> 
-  sort(decreasing = TRUE) |>
-  head(25)
+  sort(decreasing = TRUE)
+
+print(sum(all_hashtags))
+
+top_popular_hashtags <- all_hashtags |> head(25)
 
 print(top_popular_hashtags)
 
@@ -165,19 +208,7 @@ df_inference <- bind_cols(df_inference, df_hashtags_dummy)
 
 head(df_hashtags_dummy)
 ```
-
-## EDA
-
-```{r sentiment_counts}
-df |> 
-  count(sentiment) |> 
-  ggplot(aes(x = sentiment, y = n, fill = sentiment)) + 
-  geom_col() + 
-  geom_text(aes(label = as.character(n)), vjust = 1.5) + 
-  labs(x = NULL, y = NULL, title = "Number of tweets by BERT-predicted sentiment class") + 
-  theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
-```
-
+In order to decide what transformations should we apply to our features before estimating models, we obtained empirical distributions of all 5 numerical variables and compared them to Normal distribution.
 
 ```{r histograms}
 df_inference |> select(-score, -id) |> map_lgl(is.numeric) |> sum() |> print()
@@ -187,7 +218,7 @@ df_inference |>
   histogram_grid()
 
 ```
-Conclusion: log-transformation required for many variables as they show heavy-tail property.
+We conclude that log-transformation is required for: *user_followers*, *user_friends*, *user_favourites*, *retweets*, *favorites*, as all those variables are right-skewed with heavy-tail, which is the case regarding Log-Normal distribution.
 
 ```{r log_transformations}
 heavy_tailed_features <- c("user_followers", "user_friends", "user_favourites", "retweets", "favorites")
@@ -201,6 +232,10 @@ df_inference2 |>
   histogram_grid()
 
 ```
+Indeed, log-transformations improved distributions for 3 account statistics, making them much more similar to Normal. Unfortunately, due to a lot of mass at 0, it does not work for tweet statistics, respectively: *favorites* and *retweets*. For simiplificity all those variables are gonna be included in final models in log-transformed form.
+
+Moreover we decided to also add squares of both our time variables, as the relation with them in linear models is commonly expected to be quadratic or in general non-linear.
+
 ```{r logit_model}
 options(scipen = 5)
 
@@ -217,9 +252,108 @@ summary(logit_m1)
 
 acc_insample <- sum(round(logit_m1$fitted.values + 1) == as.integer(logit_m1$data$sentiment)) / nrow(logit_m1$data)
 
+sprintf("Total number of significant coefficients assuming alpha = 0.05: %s\n", sum(summary(logit_m1)$coef[, "Pr(>|z|)"] < 0.05)) |> cat()
 sprintf("Accuracy in-sample: %f\n\n", acc_insample) |> cat()
 DescTools::PseudoR2(logit_m1, which = "all")
 
 ```
+Logistic regression performed surprisingly well in our scenario. We obtained model with 77\% in-sample accuracy and 34 significant coefficients assuming $\alpha = 0.05$. We do not need to evaluate residuals distribution as CLT guarantees enough statistical power for t-tests thanks to huge number of observations. As number of variables and coefficient is large we decided to only briefly introduce most interesting conclusions instead of mechanically interpreting all coefficient estimates in statistical fashion:
 
+1. Users of TweetDeck and Web App tend to post about vaccinates with negative sentiment, opposite for Instagram. We can state Hypothesis that is related to user age as Instagram is very popular among the youngest while Web App and especially TweetDeck are preferred by older generations.
+2. Posting about COVID-19 vaccines with positive sentiment usually results in a lot of "likes" while negative tone is related to large number of "retweets".
+3. Presence of hashtags usually causes negative sentiment, especially when mentioned "breaking" (breaking news), "deltavariant", "coronavirus", "vaccines" and "pfizer".
+4. Verified user tend to post tweets of slightly more positive sentiment. 
+5. All 4 time related variables coefficients are significant regardless of their low values. Thanks to very large dataset standard error were low so as even features with very low impact could got marked as significant. 
+
+# Topic modelling
+
+In this chapter we will try to evaluate the 2nd research question stated in Introduction - can we extract some common topics repeating between the tweets? In order to verify this statement we will utilize *Latent Dirichlet Allocation* bayesian model which originates from a bio-science but then start being applied as substitute of clustering methods. To ensure getting precise estimates we utilized Gibbs sampler instead of default Variational Inference-based methods which can produced biased results for smaller samples.
+
+The data got transformed using `spacyr`, `quanted` and `tidytext` *R* libraries to obtain a form of "Document Term Matrix" required by LDA. Tokens other than alphanumeric or containing pure numbers were removed, as well as stop words (taken package `SnowballC`) and parts-of-speech do not containing sentiment-relevant information. Finally we applied BiGram model, considering additional 2-word sequences along with single-word tokens. We decided not to consider n-grams for $n > 2$ as tweets are by definition short and we already removed typically non-informative terms.
+
+```{r text_preproc}
+stopwords_df <- get_stopwords()
+
+doc_feature_mat <- df |> 
+  select(id, text) |> 
+  rename(doc_id = id) |>
+  spacy_parse(entity = FALSE, additional_attributes = c("is_punct", "like_url", "is_digit", "is_space")) |>
+  filter(
+    !is_punct, 
+    !like_url, 
+    !is_digit, 
+    !is_space, 
+    !(pos %in% c("AUX", "DET", "ADP", "NUM", "PUNCT")), 
+    str_length(lemma) > 1,
+    !str_detect(lemma, "^[:punct:]s$")
+  ) |>
+  mutate(
+    token = str_remove(token, "^\\."),
+    lemma = str_remove(lemma, "^\\.")
+  ) |>
+  select(-is_punct, -like_url, -is_digit, -is_space) |>
+  anti_join(stopwords_df, by = c("token" = "word")) |>
+  anti_join(stopwords_df, by = c("lemma" = "word")) |>
+  as.tokens(use_lemma = TRUE) |>
+  tokens_ngrams(n = 1L:2L, concatenator = "+") |>
+  dfm()
+
+doc_feature_mat |> write_rds("data/dfm.rds", compress = "bz2")
+
+topfeatures(doc_feature_mat)
+
+```
+
+For information purpose we present TOP250 most popular tokens in a form of Word Cloud plot.
+
+```{r textplots}
+# doc_feature_mat |> dfm_group(groups = df) |> textplot_keyness()
+doc_feature_mat |> textplot_wordcloud(color = scales::hue_pal()(250), max_words = 250)
+```
+
+To simplify computations and reduce noise we decided to filter all n-grams being present in less than $0.1\%$ of given dataset.
+
+```{r dtm}
+doc_term_mat <- doc_feature_mat |>
+  dfm_trim(min_termfreq = 0.001, termfreq_type = "prop") |>
+  convert(to = "topicmodels")
+
+# doc_term_mat |> write_rds("data/dtm.rds", compress = "bz2")
+
+doc_term_mat
+
+```
+
+To further simplify and make us able to provide some logical interpretations for obtained clusters we decided to restrict LDA to only 8 topics. Computations were done with fixed side for the purpose of reproducibility.
+
+```{r lda}
+lda_mod <- doc_term_mat |> LDA(
+  k = 8L, 
+  method = "Gibbs", 
+  controls = list(seed = 1234)
+)
+lda_results_df <- tidy(lda_mod, matrix = "beta")
+
+print(lda_results_df$term |> unique())
+
+lda_results_df 
+
+```
+
+```{r lda_eval}
+lda_results_by_topic_df <- lda_results_df |>
+  group_by(topic) |>
+  slice_max(beta, n = 10) |> 
+  ungroup() |>
+  arrange(topic, -beta)
+
+lda_results_by_topic_df |>
+  mutate(term = reorder_within(term, beta, topic)) |>
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  scale_x_continuous(n.breaks = 3) +
+  facet_wrap(~ topic, scales = "free", ncol = 4) +
+  scale_y_reordered()
+
+```
 
