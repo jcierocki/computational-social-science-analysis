@@ -1,5 +1,11 @@
 ---
-title: "R Notebook"
+title: "COVID-19 vaccines - tweets analysis"
+subtitle: "Collecting and Analyzing Big Data for Social Sciences [S0K17a], KU Leuven, Group 12"
+date: "Academic year 2021-2022"
+author: 
+  - Jakub Cierocki, r0867514
+  - Aleksandra Kotowicz, r0878531
+  - Prabhjyoth Mattummal, r0861984
 output: html_notebook
 ---
 
@@ -33,11 +39,11 @@ spacy_initialize("en_core_web_md", PYTHON_PATH)
 source("common.R")
 
 ```
-# Introduction
+# Overview
 
 The rise of COVID-19 pandemic and further vaccines development raised concerns of people all around the world. The discussion was conducted through, among the other, social media, including the biggest platforms like Facebook or Twitter. Probably never before a single topic was so popular all around the globe at the same time. Unfortunately, this topic also significantly polarized global society as well as entailed the rise of misinformation, commonly simplified as "fake news".
 
-In this analysis we would like to focus on two aspects of that topic:
+In this analysis we would like to focus on two aspects of that topic (research questions):
 1. To what extent and how account characteristics explain people positive/negative attitude related to COVID-19 vaccines (sentiment analysis)?
 2. What are the main subtopics disputed by people who engage in social media discussion about COVID-19-related matters?
 
@@ -208,6 +214,8 @@ df_inference <- bind_cols(df_inference, df_hashtags_dummy)
 
 head(df_hashtags_dummy)
 ```
+## Feature transformations
+
 In order to decide what transformations should we apply to our features before estimating models, we obtained empirical distributions of all 5 numerical variables and compared them to Normal distribution.
 
 ```{r histograms}
@@ -234,7 +242,9 @@ df_inference2 |>
 ```
 Indeed, log-transformations improved distributions for 3 account statistics, making them much more similar to Normal. Unfortunately, due to a lot of mass at 0, it does not work for tweet statistics, respectively: *favorites* and *retweets*. For simiplificity all those variables are gonna be included in final models in log-transformed form.
 
-Moreover we decided to also add squares of both our time variables, as the relation with them in linear models is commonly expected to be quadratic or in general non-linear.
+## Logit model estimation and evaluation
+
+We decided to also add squares of both our time variables, as the relation with them in linear models is commonly expected to be quadratic or in general non-linear.
 
 ```{r logit_model}
 options(scipen = 5)
@@ -269,7 +279,9 @@ Logistic regression performed surprisingly well in our scenario. We obtained mod
 
 In this chapter we will try to evaluate the 2nd research question stated in Introduction - can we extract some common topics repeating between the tweets? In order to verify this statement we will utilize *Latent Dirichlet Allocation* bayesian model which originates from a bio-science but then start being applied as substitute of clustering methods. To ensure getting precise estimates we utilized Gibbs sampler instead of default Variational Inference-based methods which can produced biased results for smaller samples.
 
-The data got transformed using `spacyr`, `quanted` and `tidytext` *R* libraries to obtain a form of "Document Term Matrix" required by LDA. Tokens other than alphanumeric or containing pure numbers were removed, as well as stop words (taken package `SnowballC`) and parts-of-speech do not containing sentiment-relevant information. Finally we applied BiGram model, considering additional 2-word sequences along with single-word tokens. We decided not to consider n-grams for $n > 2$ as tweets are by definition short and we already removed typically non-informative terms.
+## Data wrangling
+
+The data got transformed using `spacyr`, `quanteda` and `tidytext` *R* libraries to obtain a form of "Document Term Matrix" required by LDA. Tokens other than alphanumeric or containing pure numbers were removed, as well as stop words (taken package `SnowballC`) and parts-of-speech do not containing sentiment-relevant information. Finally we applied BiGram model, considering additional 2-word sequences along with single-word tokens. We decided not to consider n-grams for $n > 2$ as tweets are by definition short and we already removed typically non-informative terms.
 
 ```{r text_preproc}
 stopwords_df <- get_stopwords()
@@ -307,7 +319,6 @@ topfeatures(doc_feature_mat)
 For information purpose we present TOP250 most popular tokens in a form of Word Cloud plot.
 
 ```{r textplots}
-# doc_feature_mat |> dfm_group(groups = df) |> textplot_keyness()
 doc_feature_mat |> textplot_wordcloud(color = scales::hue_pal()(250), max_words = 250)
 ```
 
@@ -324,6 +335,8 @@ doc_term_mat
 
 ```
 
+## Model
+
 To further simplify and make us able to provide some logical interpretations for obtained clusters we decided to restrict LDA to only 8 topics. Computations were done with fixed side for the purpose of reproducibility.
 
 ```{r lda}
@@ -339,6 +352,10 @@ print(lda_results_df$term |> unique())
 lda_results_df 
 
 ```
+
+## Evaluation
+
+For the purpose of visualization we restricted bar-plots to 10 single token and BiGrams each.
 
 ```{r lda_eval}
 lda_results_by_topic_df <- lda_results_df |>
@@ -357,3 +374,23 @@ lda_results_by_topic_df |>
 
 ```
 
+We can see that the topics are visibly different from each other. We propose such an interpretation for each of them.
+
+1. Vaccination in China: Chinese vaccines as terms as "vaccine," "sinovac," and "sinopharm", accounted for roughly 47.5 percent of the total.
+2. Vaccination in India: This group appears to be the most consistent with search phrases.
+3. Vaccination in Russia: The third cluster is more concerned with Russian vaccines.
+4. Practical information: Information regarding doses, fees, slots, dates.
+5. Vaccination in Bengaluru: Provided by the governmental organisation Bruhat Bengaluru Mahanagara Palike (BBMP)
+6. Vaccine slogans: Slogans for advertising and encouraging to get the jab.
+7. Vaccine availability: Availability of all kinds COVID-19 vaccines in Bengaluru, India.
+8. Vaccines from Europe and United States: Terms connected to Moderna, Pfizer and Astra-Zeneca vaccines.
+
+A worth noticing fact is that majority of those topics are related to specific geographic areas.
+
+# Summary and conclusions
+
+This proven that theoretically very noisy data scraped/collected from social networks case be useful for the purpose of verifying hypothesizes or exploring people's interests. Many logical or even less obvious hypothesis were positively evaluated in inference part of our analysis. It was very surprising how strongly were the text and other user/tweet characteristics related. In terms of topics modelling, the surprising results for us was that topics are so strongly binned to specific geographic areas.
+
+# Limitations
+
+We experienced some limitations while conducting this analysis. First, in the dataset, some of the tweets texts were cut, causing information loss. Moreover lack of computational power was sometime a limitation, due to the size of dataset and nature of unstructured data which is in general very demanding in those terms. *R* itself was limiting us a lot, as its' NLP package ecosystem is significantly less matured comparing to *Python* one as well us amount of learning materials is more limited. Moreover, in *R* package ecosystem is more distributed and still many packages like i.e. `quanteda` do not follow *tidydata* coding and design principals. Finally Fisher-originated approach to statistical inference, relaying heavily on $p$-values, is not well suited for huge, computationally generated datasets. In further research, bayesian approach seems worth trying.
