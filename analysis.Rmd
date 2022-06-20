@@ -65,7 +65,7 @@ head(df) |> kable(format = "pipe")
 
 ## Labeling sentiment using BERT
 
-Sentiment analysis is very common task among Natural Language Processing topics. Although it is itself a supervised learning problem requiring availability of target variable expressing sentiment which is not the case of our dataset. So as we decided to utilize pre-trained *BERTweet* Neural Network (Transformer) model, fine-tuned for sentiment analysis to obtain predicted sentiments based on pure text, then explain them using other features in a statistical, supervised fashion. The model, named `pysentimiento/robertuito-sentiment-analysis` was retrieved from *Hugging Face* repository, containing many pre-trained transformers. As *Hugging Face* does not deliver *R* API at all, and the *torch* (neural network library required to obtain predictions) one is still immature we decided to call of them in *R* using `reticulate` package.
+Sentiment analysis is very common task among Natural Language Processing topics. Although it is itself a supervised learning problem requiring availability of target variable expressing sentiment which is not the case of our dataset. So as we decided to utilize pre-trained *BERTweet* Neural Network (Transformer) model, fine-tuned for sentiment analysis to obtain predicted sentiments based on pure text, then explain them using other features in a statistical, supervised fashion. The model, named `pysentimiento/robertuito-sentiment-analysis` was retrieved from *Hugging Face* repository, containing many pre-trained transformers, see (Pérez et el., 2021). As *Hugging Face* does not deliver *R* API at all, and the *torch* (neural network library required to obtain predictions) one is still immature we decided to call of them in *R* using `reticulate` package.
 
 ```{r transformers_config, message=FALSE, results='hide'}
 device <- ifelse(
@@ -277,7 +277,7 @@ Logistic regression performed surprisingly well in our scenario. We obtained mod
 
 # Topic modelling
 
-In this chapter we will try to evaluate the 2nd research question stated in Introduction - can we extract some common topics repeating between the tweets? In order to verify this statement we will utilize *Latent Dirichlet Allocation* bayesian model which originates from a bio-science but then start being applied as substitute of clustering methods. To ensure getting precise estimates we utilized Gibbs sampler instead of default Variational Inference-based methods which can produced biased results for smaller samples.
+In this chapter we will try to evaluate the 2nd research question stated in Introduction - can we extract some common topics repeating between the tweets? In order to verify this statement we will utilize *Latent Dirichlet Allocation* bayesian model which originates from a bio-science but then start being applied as substitute of clustering methods, see (Blei et el., 2003). To ensure getting precise estimates we utilized Gibbs sampler instead of default Variational Inference-based methods which can produced biased results for smaller samples.
 
 ## Data wrangling
 
@@ -321,6 +321,8 @@ For information purpose we present TOP250 most popular tokens in a form of Word 
 ```{r textplots}
 doc_feature_mat |> textplot_wordcloud(color = scales::hue_pal()(250), max_words = 250)
 ```
+
+It can be seen that the most used term is "covaxin", which is an Indian vaccine. It may suggest that a lot of people who posted tweets were from India or had a connection to this country. The next most used word is "vaccine", which is not surprising when it comes to COVID-19 as the vaccine topic was highly popular on social media. The third place is "moderna", which is a well-known vaccine across USA and Europe. The next words, like "dose", "age", or "slot", may be connected with people who wanted as well share or get some practical information regarding COVID-19 vaccine.
 
 To simplify computations and reduce noise we decided to filter all n-grams being present in less than $0.1\%$ of given dataset.
 
@@ -376,14 +378,15 @@ lda_results_by_topic_df |>
 
 We can see that the topics are visibly different from each other. We propose such an interpretation for each of them.
 
-1. Vaccination in China: Chinese vaccines as terms as "vaccine," "sinovac," and "sinopharm", accounted for roughly 47.5 percent of the total.
+1. Vaccine availability: Availability of all kinds COVID-19 vaccines in Bengaluru, India.
 2. Vaccination in India: This group appears to be the most consistent with search phrases.
-3. Vaccination in Russia: The third cluster is more concerned with Russian vaccines.
-4. Practical information: Information regarding doses, fees, slots, dates.
-5. Vaccination in Bengaluru: Provided by the governmental organisation Bruhat Bengaluru Mahanagara Palike (BBMP)
+3. Vaccination in China: Both "sinovac" and "china" terms present.
+4. Vaccination in Bengaluru: Provided by the governmental organisation Bruhat Bengaluru Mahanagara Palike (BBMP)
+5. Vaccines from Europe and United States: Terms connected to Moderna, Pfizer and Astra-Zeneca vaccines.
 6. Vaccine slogans: Slogans for advertising and encouraging to get the jab.
-7. Vaccine availability: Availability of all kinds COVID-19 vaccines in Bengaluru, India.
-8. Vaccines from Europe and United States: Terms connected to Moderna, Pfizer and Astra-Zeneca vaccines.
+7. General post-vaccination experience: General terms related to getting vaccinated recently like "today", "thank".
+8. Practical information: Information regarding doses, fees, slots, dates.
+
 
 A worth noticing fact is that majority of those topics are related to specific geographic areas.
 
@@ -394,3 +397,11 @@ This proven that theoretically very noisy data scraped/collected from social net
 # Limitations
 
 We experienced some limitations while conducting this analysis. First, in the dataset, some of the tweets texts were cut, causing information loss. Moreover lack of computational power was sometime a limitation, due to the size of dataset and nature of unstructured data which is in general very demanding in those terms. *R* itself was limiting us a lot, as its' NLP package ecosystem is significantly less matured comparing to *Python* one as well us amount of learning materials is more limited. Moreover, in *R* package ecosystem is more distributed and still many packages like i.e. `quanteda` do not follow *tidydata* coding and design principals. Finally Fisher-originated approach to statistical inference, relaying heavily on $p$-values, is not well suited for huge, computationally generated datasets. In further research, bayesian approach seems worth trying.
+
+# References
+
+1. Juan M. Pérez, Damián A. Furman, Laura A. Alemany, Franco Luque. 2021. pysentimiento: A Python Toolkit for Sentiment Analysis and SocialNLP tasks. arXiv. 2106.09462.
+
+2. David M. Blei, Andrew Y. Ng, and Michael I. Jordan. 2003. Latent dirichlet allocation. J. Mach. Learn. Res. 3, null (3/1/2003), 993–1022.
+
+topic interpretations reordered and adjusted, crticial analysis and papers added
